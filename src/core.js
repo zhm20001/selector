@@ -58,6 +58,7 @@
       proPromoTitle:"Selector Pro", proPromoDesc:"Always one shortcut away. Stays active across tabs, captures complete elements without dialogs, and syncs your settings.", proPromoCta:"Get the extension →",
       freePromoTitle:"Free bookmarklet", freePromoDesc:"No install — drag a bookmark, use on any page.", freePromoCta:"Open on GitHub →",
       mdTitle:"Markdown ready", mdPreparing:"Preparing Markdown…", copyMarkdown:"Copy Markdown",
+      insideShadow:"inside <{host}> (shadow)",
       errUnsupported:"Browser not supported", errCancelled:"Screen choice cancelled",
       errPermission:"Screen recording blocked", errClipboard:"Clipboard blocked",
       errCapture:"Screenshot failed", errEmpty:"Selected area is empty", errDownload:"File save failed",
@@ -84,6 +85,7 @@
       proPromoTitle:"Selector Pro", proPromoDesc:"\u968f\u65f6\u4e00\u952e\u5524\u8d77\u3002\u5207\u6362\u6807\u7b7e\u4ecd\u4fdd\u6301\u5f00\u542f\u3001\u96f6\u5f39\u7a97\u5b8c\u6574\u622a\u56fe\u3001\u8bbe\u7f6e\u81ea\u52a8\u540c\u6b65\u3002", proPromoCta:"\u83b7\u53d6\u6d4f\u89c8\u5668\u6269\u5c55 \u2192",
       freePromoTitle:"\u514d\u8d39\u4e66\u7b7e\u7248", freePromoDesc:"\u514d\u5b89\u88c5 \u2014\u2014 \u62d6\u4e00\u4e2a\u4e66\u7b7e\uff0c\u4efb\u610f\u9875\u9762\u53ef\u7528\u3002", freePromoCta:"\u5728 GitHub \u6253\u5f00 \u2192",
       mdTitle:"Markdown \u5df2\u751f\u6210", mdPreparing:"Markdown \u751f\u6210\u4e2d\u2026", copyMarkdown:"\u590d\u5236 Markdown",
+      insideShadow:"\u4f4d\u4e8e <{host}> (shadow) \u5185",
       errUnsupported:"\u6d4f\u89c8\u5668\u4e0d\u652f\u6301", errCancelled:"\u5df2\u53d6\u6d88\u5c4f\u5e55\u9009\u62e9",
       errPermission:"\u5c4f\u5e55\u5f55\u5236\u6743\u9650\u53d7\u9650", errClipboard:"\u526a\u8d34\u677f\u6743\u9650\u53d7\u9650",
       errCapture:"\u622a\u56fe\u5931\u8d25", errEmpty:"\u9009\u4e2d\u533a\u57df\u65e0\u6cd5\u622a\u56fe", errDownload:"\u6587\u4ef6\u4fdd\u5b58\u5931\u8d25",
@@ -316,7 +318,17 @@
       root.setAttribute(AI_ID, `el-${aiIdCounter++}`);
     }
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-    let node; while ((node = walker.nextNode())) { if (isEditorElement(node)) continue; if (!node.hasAttribute(AI_ID)) node.setAttribute(AI_ID, `el-${aiIdCounter++}`); }
+    const innerRoots = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      if (isEditorElement(node)) continue;
+      if (!node.hasAttribute(AI_ID)) node.setAttribute(AI_ID, `el-${aiIdCounter++}`);
+      const inner = openShadowRootOf(node);
+      if (inner) innerRoots.push(inner);
+    }
+    // Marquee and undo address elements by AI-ID, so shadow content needs them
+    // too. Closed roots stay unassigned (never entered, by scope).
+    for (const inner of innerRoots) assignAiIds(inner);
   }
   function isEditorElement(el) { return el && el.closest && !!el.closest(`.${NS}-root, .${NS}-layer-host`); }
   function isTypingTarget(el) {
@@ -324,6 +336,67 @@
       (el.closest && el.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) ||
       el.isContentEditable
     ));
+  }
+
+  // ── Shadow boundary helpers ──────────────────────────────────
+  // Pointer events are retargeted at shadow boundaries, and parentElement /
+  // closest / contains all stop there. Open roots stay traversable via
+  // ShadowRoot.host; closed roots are deliberately opaque (never entered —
+  // selection keeps landing on the outer host).
+  function climbParent(el) {
+    const p = el.parentElement;
+    if (p) return p;
+    const root = el.parentNode;
+    if (root && root.nodeType === 11 && root.mode === "open" && root.host) return root.host;
+    return null;
+  }
+  function openShadowRootOf(el) {
+    return el && el.shadowRoot && el.shadowRoot.mode === "open" ? el.shadowRoot : null;
+  }
+  function closestPiercing(el, selector) {
+    for (let cur = el; cur && cur.nodeType === 1; cur = climbParent(cur)) {
+      const found = cur.closest(selector);
+      if (found) return found;
+    }
+    return null;
+  }
+  function containsPiercing(root, el) {
+    if (!root || !el) return false;
+    if (root === el || root.contains(el)) return true;
+    for (let cur = el; cur; cur = climbParent(cur)) { if (cur === root) return true; }
+    return false;
+  }
+  function shadowHostOf(el) {
+    for (let cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
+      const parent = cur.parentNode;
+      if (parent && parent.nodeType === 11 && parent.host && parent.mode === "open") return parent.host;
+    }
+    return null;
+  }
+  // Open shadow roots under a root node, depth-first. Closed roots report a
+  // null shadowRoot and are skipped — never entered, by scope.
+  function openShadowRootsUnder(root) {
+    const roots = [];
+    const stack = [root || document];
+    while (stack.length) {
+      const current = stack.pop();
+      let walker;
+      try { walker = document.createTreeWalker(current, NodeFilter.SHOW_ELEMENT); } catch (_) { continue; }
+      let node;
+      while ((node = walker.nextNode())) {
+        const inner = openShadowRootOf(node);
+        if (inner) { roots.push(inner); stack.push(inner); }
+      }
+    }
+    return roots;
+  }
+  // document.querySelectorAll plus every open shadow tree beneath it.
+  function querySelectorAllPiercing(selector) {
+    const out = Array.from(document.querySelectorAll(selector));
+    for (const root of openShadowRootsUnder(document)) {
+      try { out.push(...root.querySelectorAll(selector)); } catch (_) {}
+    }
+    return out;
   }
   function ensureSelectorLayerHost() {
     if (layerHost && layerHost.isConnected) return layerHost;
@@ -372,4 +445,10 @@
       }
     });
   }
-  function byAiId(id) { return document.querySelector(`[${AI_ID}="${id}"]`); }
+  function byAiId(id) {
+    // Selected elements can live inside shadow trees where document-level
+    // querySelector cannot reach; the selection list itself is authoritative.
+    const selected = selectedElements.find(el => el.getAttribute && el.getAttribute(AI_ID) === id);
+    if (selected) return selected;
+    return document.querySelector(`[${AI_ID}="${id}"]`);
+  }

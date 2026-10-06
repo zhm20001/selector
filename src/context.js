@@ -158,7 +158,7 @@
         if (node.__vueParentComponent) return { version: 3, instance: node.__vueParentComponent };
         if (node.__vue__) return { version: 2, instance: node.__vue__ };
       } catch (_) { return null; }
-      node = node.parentElement;
+      node = climbParent(node);
     }
     return null;
   }
@@ -335,7 +335,14 @@
       dataAttrs, reactProps: frameworkProps, ...reactInfo, ...vueInfo,
     };
     ctx.title = contextTitle(el, ctx);
-    ctx.inside = getSemanticContextStr(el);
+    // The inside: field leads with the shadow host when the element lives in
+    // one, so both the user and the receiving AI know the owning component.
+    // Elements in the main tree (and the host itself) keep the plain output.
+    const host = shadowHostOf(el);
+    const semantic = getSemanticContextStr(el);
+    ctx.inside = host
+      ? [`shadow <${host.tagName.toLowerCase()}>`, semantic].filter(Boolean).join("; ")
+      : semantic;
     ctx.visual = getVisualSummary(el, ctx, classTokens);
     if (shouldIncludeSelector(rawSelector, ctx)) ctx.selector = rawSelector;
     if (shouldIncludeLayout(el)) ctx.layout = getLayoutSummary(el);
@@ -378,7 +385,9 @@
 
   function shouldIncludeSelector(selector, ctx) {
     if (!selector) return false;
-    const durableDirect = selector.length <= 120 && (/^#/.test(selector) || /^\[data-/.test(selector) || /^[a-z]+\[data-/.test(selector));
+    // A ">>"-segmented selector crosses shadow boundaries — document-level
+    // locators can't express that, so it is always worth emitting (within cap).
+    const durableDirect = selector.length <= 120 && (/^#/.test(selector) || /^\[data-/.test(selector) || /^[a-z]+\[data-/.test(selector) || selector.includes(" >> "));
     if (durableDirect) return true;
     const hasStrongIdentity = ctx.locator || ctx.react || ctx.vue || ctx.source || ctx.text || Object.keys(ctx.dataAttrs).length;
     if (hasStrongIdentity) return false;
@@ -520,23 +529,55 @@
     return /\b(container|layout|grid|row|toolbar|header|footer|sidebar|content)\b/i.test(Array.from(el.classList).join(" "));
   }
 
+  // Selectors are generated per tree (document / open shadow root) and joined
+  // across shadow boundaries with " >> ": `div.demo > open-card >> span.card__title`.
+  // Each segment chain is generated and uniqueness-checked within its own tree,
+  // because document-level querySelector cannot see inside shadow roots. The
+  // composition is unique when every chain is unique in its own tree.
+  function containingTreeRoot(el) {
+    for (let n = el.parentNode; n; n = n.parentNode) {
+      if (n.nodeType === 11 || n.nodeType === 9) return n;
+    }
+    return document;
+  }
+
   function buildSelector(el) {
-    const direct = bestDirectSelector(el);
+    const chains = [];
+    let node = el;
+    while (node) {
+      const root = containingTreeRoot(node);
+      const chain = buildChainInTree(node, root);
+      if (!chain) return chains.join(" >> ");
+      chains.unshift(chain);
+      // A ShadowRoot (nodeType 11) means the next segment lives on the host in
+      // the outer tree; a closed root would surface here as its host too, but
+      // inner elements of closed roots are never selected (host-level only).
+      if (root.nodeType !== 11 || !root.host) break;
+      node = root.host;
+    }
+    return chains.join(" >> ");
+  }
+
+  function buildChainInTree(el, root) {
+    const direct = bestDirectSelector(el, root);
     if (direct) return direct;
     const parts = []; let node = el;
     while (node && node !== document.body && node !== document.documentElement) {
-      const stable = stableSegment(node);
+      const stable = stableSegment(node, root);
       if (stable) {
         parts.unshift(stable);
         const candidate = parts.join(" > ");
-        if (isUniqueSelector(candidate)) return candidate;
+        if (isUniqueSelector(candidate, root)) return candidate;
         if (stable.startsWith("#")) break;
         node = node.parentElement;
         continue;
       }
       let seg = node.tagName.toLowerCase();
       const p = node.parentElement;
-      if (p) { const s = Array.from(p.children).filter(c => c.tagName === node.tagName); if (s.length > 1) seg += `:nth-of-type(${s.indexOf(node) + 1})`; }
+      // A shadow-tree top node has no parentElement; its siblings are the
+      // root's children, so same-tag disambiguation uses those instead.
+      const sibs = p ? p.children : root.children;
+      if (sibs) { const s = Array.from(sibs).filter(c => c.tagName === node.tagName); if (s.length > 1) seg += `:nth-of-type(${s.indexOf(node) + 1})`; }
       parts.unshift(seg); node = node.parentElement;
     }
     return parts.join(" > ");
@@ -545,34 +586,34 @@
   function truncate(s, max) { if (!s) return ""; s = s.replace(/\s+/g, " ").trim(); return s.length > max ? s.slice(0, max) + "\u2026" : s; }
   function truncateHtml(s, max) { if (!s) return ""; s = s.replace(/\s+/g, " ").trim(); return s.length > max ? s.slice(0, max) + "\u2026" : s; }
 
-  function bestDirectSelector(el) {
+  function bestDirectSelector(el, root) {
     const tag = el.tagName.toLowerCase();
     const attrs = ["data-testid","data-test","data-cy","data-qa","data-test-id"];
     for (const name of attrs) {
       const value = el.getAttribute(name);
       if (!value) continue;
       const selector = `[${name}="${escapeAttr(value)}"]`;
-      if (isUniqueSelector(selector)) return selector;
+      if (isUniqueSelector(selector, root)) return selector;
       const tagged = `${tag}${selector}`;
-      if (isUniqueSelector(tagged)) return tagged;
+      if (isUniqueSelector(tagged, root)) return tagged;
     }
     if (el.id && isStableToken(el.id)) {
       const selector = `#${escapeIdent(el.id)}`;
-      if (isUniqueSelector(selector)) return selector;
+      if (isUniqueSelector(selector, root)) return selector;
     }
     for (const name of ["aria-label","name","title"]) {
       const value = el.getAttribute(name);
       if (!value || value.length > 80) continue;
       const selector = `${tag}[${name}="${escapeAttr(value)}"]`;
-      if (isUniqueSelector(selector)) return selector;
+      if (isUniqueSelector(selector, root)) return selector;
     }
     const classSelector = semanticClassSelector(el);
-    if (classSelector && isUniqueSelector(classSelector)) return classSelector;
+    if (classSelector && isUniqueSelector(classSelector, root)) return classSelector;
     return null;
   }
 
-  function stableSegment(el) {
-    const direct = bestDirectSelector(el);
+  function stableSegment(el, root) {
+    const direct = bestDirectSelector(el, root);
     if (direct) return direct;
     if (el.id && isStableToken(el.id)) return `#${escapeIdent(el.id)}`;
     const cls = stableClasses(el)[0];
@@ -649,8 +690,8 @@
     return (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
   }
 
-  function isUniqueSelector(selector) {
-    try { return document.querySelectorAll(selector).length === 1; }
+  function isUniqueSelector(selector, root) {
+    try { return (root || document).querySelectorAll(selector).length === 1; }
     catch(_) { return false; }
   }
 
