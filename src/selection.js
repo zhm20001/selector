@@ -153,7 +153,10 @@
     const mRect = dragState.marquee.getBoundingClientRect();
     dragState.marquee.remove(); dragState = null;
     pushHistory(); if (!e.shiftKey) clearSelection();
-    document.querySelectorAll(`[${AI_ID}]`).forEach(el => {
+    // Shadow content created after activation may not carry IDs yet; assign
+    // before collecting candidates. Closed roots stay host-level (no IDs).
+    for (const root of openShadowRootsUnder(document)) assignAiIds(root);
+    querySelectorAllPiercing(`[${AI_ID}]`).forEach(el => {
       if (isEditorElement(el) || !isVisible(el) || !isMeaningful(el)) return;
       if (rectsIntersect(mRect, el.getBoundingClientRect())) addSelection(el);
     });
@@ -223,19 +226,27 @@
   }
 
   // ── Navigation ──────────────────────────────────────────────
-  // Arrow-key navigation deliberately still walks the light-DOM chain only;
-  // crossing shadow boundaries here lands with the keyboard/marquee ticket (#3).
+  // climbParent crosses open shadow boundaries in both directions: a shadow
+  // child climbs to its tree's top and then to the host; hosts descend into
+  // their open shadowRoot's children. Closed roots report no shadowRoot, so
+  // navigation keeps landing on the host.
   function navigateToParent() {
     if (selectedElements.length!==1) return;
-    let p=selectedElements[0].parentElement;
-    while(p&&p!==document.body&&p!==document.documentElement){ if(!isEditorElement(p)&&isVisible(p)){ pushHistory();clearSelection();addSelection(p);updateTags();return; } p=p.parentElement; }
+    let p=climbParent(selectedElements[0]);
+    while(p&&p!==document.body&&p!==document.documentElement){ if(!isEditorElement(p)&&isVisible(p)){ pushHistory();clearSelection();addSelection(p);updateTags();return; } p=climbParent(p); }
   }
   function navigateToChild() {
     if (selectedElements.length!==1) return;
-    for(const c of selectedElements[0].children){ if(!isEditorElement(c)&&isVisible(c)&&isMeaningful(c)){ pushHistory();clearSelection();addSelection(c);updateTags();return; } }
+    const el=selectedElements[0];
+    const shadow = el.shadowRoot && el.shadowRoot.mode === "open" ? el.shadowRoot : null;
+    const candidates = shadow ? Array.from(el.children).concat(Array.from(shadow.children)) : el.children;
+    for(const c of candidates){ if(!isEditorElement(c)&&isVisible(c)&&isMeaningful(c)){ pushHistory();clearSelection();addSelection(c);updateTags();return; } }
   }
   function navigateToSibling(dir) {
-    if (selectedElements.length!==1) return; const el=selectedElements[0], par=el.parentElement; if(!par) return;
+    if (selectedElements.length!==1) return;
+    const el=selectedElements[0];
+    const par = el.parentElement || (el.parentNode && el.parentNode.nodeType === 11 && el.parentNode.mode === "open" ? el.parentNode : null);
+    if(!par) return;
     const sibs=Array.from(par.children).filter(c=>!isEditorElement(c)&&isVisible(c)&&isMeaningful(c));
     const next=sibs[sibs.indexOf(el)+dir]; if(next){ pushHistory();clearSelection();addSelection(next);updateTags(); }
   }

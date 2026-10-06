@@ -316,7 +316,17 @@
       root.setAttribute(AI_ID, `el-${aiIdCounter++}`);
     }
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-    let node; while ((node = walker.nextNode())) { if (isEditorElement(node)) continue; if (!node.hasAttribute(AI_ID)) node.setAttribute(AI_ID, `el-${aiIdCounter++}`); }
+    const innerRoots = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      if (isEditorElement(node)) continue;
+      if (!node.hasAttribute(AI_ID)) node.setAttribute(AI_ID, `el-${aiIdCounter++}`);
+      const inner = node.shadowRoot;
+      if (inner && inner.mode === "open") innerRoots.push(inner);
+    }
+    // Marquee and undo address elements by AI-ID, so shadow content needs them
+    // too. Closed roots stay unassigned (never entered, by scope).
+    for (const inner of innerRoots) assignAiIds(inner);
   }
   function isEditorElement(el) { return el && el.closest && !!el.closest(`.${NS}-root, .${NS}-layer-host`); }
   function isTypingTarget(el) {
@@ -350,6 +360,38 @@
     if (root === el || root.contains(el)) return true;
     for (let cur = el; cur; cur = climbParent(cur)) { if (cur === root) return true; }
     return false;
+  }
+  function shadowHostOf(el) {
+    for (let cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
+      const parent = cur.parentNode;
+      if (parent && parent.nodeType === 11 && parent.host && parent.mode === "open") return parent.host;
+    }
+    return null;
+  }
+  // Open shadow roots under a root node, depth-first. Closed roots report a
+  // null shadowRoot and are skipped — never entered, by scope.
+  function openShadowRootsUnder(root) {
+    const roots = [];
+    const stack = [root || document];
+    while (stack.length) {
+      const current = stack.pop();
+      let walker;
+      try { walker = document.createTreeWalker(current, NodeFilter.SHOW_ELEMENT); } catch (_) { continue; }
+      let node;
+      while ((node = walker.nextNode())) {
+        const inner = node.shadowRoot;
+        if (inner && inner.mode === "open") { roots.push(inner); stack.push(inner); }
+      }
+    }
+    return roots;
+  }
+  // document.querySelectorAll plus every open shadow tree beneath it.
+  function querySelectorAllPiercing(selector) {
+    const out = Array.from(document.querySelectorAll(selector));
+    for (const root of openShadowRootsUnder(document)) {
+      try { out.push(...root.querySelectorAll(selector)); } catch (_) {}
+    }
+    return out;
   }
   function ensureSelectorLayerHost() {
     if (layerHost && layerHost.isConnected) return layerHost;
