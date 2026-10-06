@@ -83,10 +83,12 @@ git clone https://github.com/oil-oil/selector.git
 cd selector
 npm ci
 npm run build
+npm test   # builds first, then runs the jsdom test suite in tests/
 # Source files:
 #   assets/editor.css     — styles for the in-page editor UI
 #   src/*.js              — editor source fragments assembled by scripts/build.js
 #   src/sharingan.js      — Sharingan-mode replication report, inlined at build time
+#   tests/                — jsdom tests driving the assembled payload end to end
 # Push to main — GitHub Actions builds dist/ and deploys GitHub Pages
 ```
 
