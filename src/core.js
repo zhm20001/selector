@@ -323,8 +323,8 @@
     while ((node = walker.nextNode())) {
       if (isEditorElement(node)) continue;
       if (!node.hasAttribute(AI_ID)) node.setAttribute(AI_ID, `el-${aiIdCounter++}`);
-      const inner = node.shadowRoot;
-      if (inner && inner.mode === "open") innerRoots.push(inner);
+      const inner = openShadowRootOf(node);
+      if (inner) innerRoots.push(inner);
     }
     // Marquee and undo address elements by AI-ID, so shadow content needs them
     // too. Closed roots stay unassigned (never entered, by scope).
@@ -349,6 +349,9 @@
     const root = el.parentNode;
     if (root && root.nodeType === 11 && root.mode === "open" && root.host) return root.host;
     return null;
+  }
+  function openShadowRootOf(el) {
+    return el && el.shadowRoot && el.shadowRoot.mode === "open" ? el.shadowRoot : null;
   }
   function closestPiercing(el, selector) {
     for (let cur = el; cur && cur.nodeType === 1; cur = climbParent(cur)) {
@@ -381,8 +384,8 @@
       try { walker = document.createTreeWalker(current, NodeFilter.SHOW_ELEMENT); } catch (_) { continue; }
       let node;
       while ((node = walker.nextNode())) {
-        const inner = node.shadowRoot;
-        if (inner && inner.mode === "open") { roots.push(inner); stack.push(inner); }
+        const inner = openShadowRootOf(node);
+        if (inner) { roots.push(inner); stack.push(inner); }
       }
     }
     return roots;

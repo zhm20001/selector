@@ -574,7 +574,10 @@
       }
       let seg = node.tagName.toLowerCase();
       const p = node.parentElement;
-      if (p) { const s = Array.from(p.children).filter(c => c.tagName === node.tagName); if (s.length > 1) seg += `:nth-of-type(${s.indexOf(node) + 1})`; }
+      // A shadow-tree top node has no parentElement; its siblings are the
+      // root's children, so same-tag disambiguation uses those instead.
+      const sibs = p ? p.children : root.children;
+      if (sibs) { const s = Array.from(sibs).filter(c => c.tagName === node.tagName); if (s.length > 1) seg += `:nth-of-type(${s.indexOf(node) + 1})`; }
       parts.unshift(seg); node = node.parentElement;
     }
     return parts.join(" > ");

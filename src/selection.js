@@ -153,9 +153,9 @@
     const mRect = dragState.marquee.getBoundingClientRect();
     dragState.marquee.remove(); dragState = null;
     pushHistory(); if (!e.shiftKey) clearSelection();
-    // Shadow content created after activation may not carry IDs yet; assign
-    // before collecting candidates. Closed roots stay host-level (no IDs).
-    for (const root of openShadowRootsUnder(document)) assignAiIds(root);
+    // Late-created shadow trees may not carry IDs yet; assign before collecting
+    // candidates (assignAiIds already pierces open roots recursively).
+    assignAiIds(document.body);
     querySelectorAllPiercing(`[${AI_ID}]`).forEach(el => {
       if (isEditorElement(el) || !isVisible(el) || !isMeaningful(el)) return;
       if (rectsIntersect(mRect, el.getBoundingClientRect())) addSelection(el);
@@ -238,13 +238,15 @@
   function navigateToChild() {
     if (selectedElements.length!==1) return;
     const el=selectedElements[0];
-    const shadow = el.shadowRoot && el.shadowRoot.mode === "open" ? el.shadowRoot : null;
+    const shadow = openShadowRootOf(el);
     const candidates = shadow ? Array.from(el.children).concat(Array.from(shadow.children)) : el.children;
     for(const c of candidates){ if(!isEditorElement(c)&&isVisible(c)&&isMeaningful(c)){ pushHistory();clearSelection();addSelection(c);updateTags();return; } }
   }
   function navigateToSibling(dir) {
     if (selectedElements.length!==1) return;
     const el=selectedElements[0];
+    // Siblings live in the SAME tree, so the parent here is parentElement or
+    // the shadow root itself — unlike climbParent, which would jump to the host.
     const par = el.parentElement || (el.parentNode && el.parentNode.nodeType === 11 && el.parentNode.mode === "open" ? el.parentNode : null);
     if(!par) return;
     const sibs=Array.from(par.children).filter(c=>!isEditorElement(c)&&isVisible(c)&&isMeaningful(c));
