@@ -325,6 +325,32 @@
       el.isContentEditable
     ));
   }
+
+  // ── Shadow boundary helpers ──────────────────────────────────
+  // Pointer events are retargeted at shadow boundaries, and parentElement /
+  // closest / contains all stop there. Open roots stay traversable via
+  // ShadowRoot.host; closed roots are deliberately opaque (never entered —
+  // selection keeps landing on the outer host).
+  function climbParent(el) {
+    const p = el.parentElement;
+    if (p) return p;
+    const root = el.parentNode;
+    if (root && root.nodeType === 11 && root.mode === "open" && root.host) return root.host;
+    return null;
+  }
+  function closestPiercing(el, selector) {
+    for (let cur = el; cur && cur.nodeType === 1; cur = climbParent(cur)) {
+      const found = cur.closest(selector);
+      if (found) return found;
+    }
+    return null;
+  }
+  function containsPiercing(root, el) {
+    if (!root || !el) return false;
+    if (root === el || root.contains(el)) return true;
+    for (let cur = el; cur; cur = climbParent(cur)) { if (cur === root) return true; }
+    return false;
+  }
   function ensureSelectorLayerHost() {
     if (layerHost && layerHost.isConnected) return layerHost;
     layerHost = document.createElement("div");
@@ -372,4 +398,10 @@
       }
     });
   }
-  function byAiId(id) { return document.querySelector(`[${AI_ID}="${id}"]`); }
+  function byAiId(id) {
+    // Selected elements can live inside shadow trees where document-level
+    // querySelector cannot reach; the selection list itself is authoritative.
+    const selected = selectedElements.find(el => el.getAttribute && el.getAttribute(AI_ID) === id);
+    if (selected) return selected;
+    return document.querySelector(`[${AI_ID}="${id}"]`);
+  }

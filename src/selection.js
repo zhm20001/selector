@@ -1,19 +1,43 @@
   // ── Resolve target ───────────────────────────────────────────
-  // Browsers do not dispatch pointer/click events to disabled form controls:
-  // hovering or clicking a <button disabled> targets an ANCESTOR instead.
-  // Hit-testing (elementsFromPoint) is unaffected and still reports the real
-  // topmost element, so walk the stack and hand back the disabled control
-  // the browser swallowed. Elements with pointer-events:none never appear in
-  // the stack, so this cannot pick up non-interactive layers.
-  function resolveEventTarget(e) {
-    if (document.elementsFromPoint && e.clientX != null && e.clientY != null) {
-      const stack = document.elementsFromPoint(e.clientX, e.clientY);
-      for (const el of stack) {
-        if (el === e.target) break; // reached the real target — nothing was retargeted
-        if (el && el.nodeType === 1 && !isEditorElement(el) && el.disabled === true) return el;
-      }
-    }
+  // Two ways the browser hides the real element from us:
+  // 1. Disabled form controls never receive pointer/click events: hovering or
+  //    clicking a <button disabled> targets an ANCESTOR instead. Hit-testing
+  //    (elementsFromPoint) is unaffected and still reports the real topmost
+  //    element, so walk the stack and hand back the disabled control the
+  //    browser swallowed. Elements with pointer-events:none never appear in
+  //    the stack, so this cannot pick up non-interactive layers.
+  // 2. Shadow boundaries retarget events to the host element. composedPath()
+  //    exposes the innermost element for OPEN roots (the browser prunes the
+  //    path back to the host for closed roots — never entered, by scope).
+  //    document.elementsFromPoint is boundary-blind and reports only the
+  //    host, so descend through open shadow roots the same way.
+  function innermostEventTarget(e) {
+    try { const path = e.composedPath && e.composedPath(); if (path && path.length && path[0]) return path[0]; } catch (_) {}
     return e.target;
+  }
+  function elementStackFromPoint(e) {
+    if (!document.elementsFromPoint || e.clientX == null || e.clientY == null) return [];
+    let stack = document.elementsFromPoint(e.clientX, e.clientY);
+    // Each hop peels one shadow boundary: the topmost element is the host of
+    // an open root; re-hit-test inside that root to reach the real element.
+    // top.shadowRoot is null for closed roots, which stops the descent.
+    for (let hop = 0; hop < 8; hop++) {
+      const top = stack[0];
+      const root = top && top.nodeType === 1 && top.shadowRoot;
+      if (!root || typeof root.elementsFromPoint !== "function") break;
+      const inner = root.elementsFromPoint(e.clientX, e.clientY);
+      if (!inner || !inner.length) break;
+      stack = inner.concat(stack);
+    }
+    return stack;
+  }
+  function resolveEventTarget(e) {
+    const real = innermostEventTarget(e);
+    for (const el of elementStackFromPoint(e)) {
+      if (el === real) break; // reached the real target — nothing was retargeted
+      if (el && el.nodeType === 1 && !isEditorElement(el) && el.disabled === true) return el;
+    }
+    return real;
   }
 
   function resolveTarget(el) {
@@ -21,10 +45,10 @@
     if (action && !isEditorElement(action) && isVisible(action)) return action;
     let cur = el;
     while (cur && cur !== document.body && cur !== document.documentElement) {
-      if (isEditorElement(cur)) { cur = cur.parentElement; continue; }
-      if (!isVisible(cur)) { cur = cur.parentElement; continue; }
+      if (isEditorElement(cur)) { cur = climbParent(cur); continue; }
+      if (!isVisible(cur)) { cur = climbParent(cur); continue; }
       if (isMeaningful(cur)) return cur;
-      cur = cur.parentElement;
+      cur = climbParent(cur);
     }
     return el;
   }
@@ -34,29 +58,30 @@
     const root = selectedElements[0];
     const r = root.getBoundingClientRect();
     if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return null;
-    const stack = document.elementsFromPoint ? document.elementsFromPoint(e.clientX, e.clientY) : [e.target];
-    for (const el of stack) {
+    const stack = elementStackFromPoint(e);
+    const real = innermostEventTarget(e);
+    for (const el of (stack.length ? stack : [real])) {
       const nested = resolveNestedTarget(root, el);
       if (nested) return nested;
     }
-    return resolveNestedTarget(root, e.target);
+    return resolveNestedTarget(root, real);
   }
 
   function resolveNestedTarget(root, el) {
     const action = closestActionElement(el);
-    if (action && action !== root && root.contains(action) && !isEditorElement(action) && isVisible(action)) return action;
+    if (action && action !== root && containsPiercing(root, action) && !isEditorElement(action) && isVisible(action)) return action;
     let cur = el;
     while (cur && cur !== root && cur !== document.body && cur !== document.documentElement) {
-      if (!root.contains(cur)) return null;
-      if (isEditorElement(cur)) { cur = cur.parentElement; continue; }
+      if (!containsPiercing(root, cur)) return null;
+      if (isEditorElement(cur)) { cur = climbParent(cur); continue; }
       if (isVisible(cur) && isMeaningful(cur)) return cur;
-      cur = cur.parentElement;
+      cur = climbParent(cur);
     }
     return null;
   }
 
   function closestActionElement(el) {
-    return el && el.closest && el.closest("button,a,input,select,textarea,[role='button'],[role='link'],[role='menuitem'],[role='tab'],[role='checkbox'],[role='radio']");
+    return el && closestPiercing(el, "button,a,input,select,textarea,[role='button'],[role='link'],[role='menuitem'],[role='tab'],[role='checkbox'],[role='radio']");
   }
   function isVisible(el) {
     const r = el.getBoundingClientRect();

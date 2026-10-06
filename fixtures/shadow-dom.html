@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Selector fixture — Shadow DOM</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f5f5f4; color: #1c1917; padding: 32px 24px 64px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  .lede { font-size: 13px; color: #78716c; margin-bottom: 28px; line-height: 1.7; }
+  .lede code { background: #e7e5e4; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  h2 { font-size: 14px; margin: 30px 0 10px; padding-left: 10px; border-left: 3px solid #1c1917; }
+  .hint { font-size: 12px; color: #a8a29e; margin-bottom: 10px; line-height: 1.6; }
+  .demo {
+    background: #fff; border: 1px solid #e7e5e4; border-radius: 8px;
+    padding: 18px; min-height: 64px;
+  }
+  .demo + .hint { margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Selector fixture — Shadow DOM</h1>
+  <p class="lede">
+    手动验收用示例页：先在安装页拖走 Selector 书签，再回到本页点击书签激活选择。
+    每个区块对应 issue #1 的一条验收标准，块下方的 <code>☐</code> 列表就是操作步骤。
+    <strong>closed 区块的行为必须保持“选中 host”，不允许穿透。</strong>
+  </p>
+
+  <h2>1. Open shadow root：悬停与点击命中内部元素</h2>
+  <div class="demo"><open-card card-title="公开的影子卡片"></open-card></div>
+  <p class="hint">
+    ☐ hover 卡片标题 → 覆盖框贴住标题文本（不是整卡）<br>
+    ☐ hover 中间的「确认」按钮 → 覆盖框贴住按钮；点击选中，⌘C 复制的 prompt 描述 button 而非 host<br>
+    ☐ hover 底部纯文本 span → 能选到该 span<br>
+    ☐ Shift+点击加选第二个元素 → 两框并存；⌘Z 撤销 / Esc 清除行为正常
+  </p>
+
+  <h2>2. 嵌套 open shadow root：连续跨两层边界</h2>
+  <div class="demo"><outer-panel></outer-panel></div>
+  <p class="hint">
+    ☐ hover 内层徽标 → 覆盖框贴住徽标（外层组件影子树里的内层组件影子树）<br>
+    ☐ hover 内层灰字 → 不可见/无意义爬升启发式仍然生效，选中最近的有意义祖先
+  </p>
+
+  <h2>3. Open shadow 内的 disabled 控件（elementsFromPoint 兜底）</h2>
+  <div class="demo"><tool-bar></tool-bar></div>
+  <p class="hint">
+    ☐ hover 灰色「已禁用」按钮 → 选中该 disabled button 本身，而非其影子祖先<br>
+    ☐ 点击选中后 ⌘C → prompt 中 tag 为 button、可见文本为「已禁用」
+  </p>
+
+  <h2>4. Open shadow 内的表单输入</h2>
+  <div class="demo"><login-form></login-form></div>
+  <p class="hint">
+    ☐ hover 输入框 → 选中 input（含 placeholder 语义）；点击选中不弹页面自身的提交行为<br>
+    ☐ 在输入框内打字时不被 Selector 的快捷键吞掉正常字符以外的行为保持与主树一致
+  </p>
+
+  <h2>5. Closed shadow root：行为必须与现状一致</h2>
+  <div class="demo"><closed-card card-title="加密的影子卡片"></closed-card></div>
+  <p class="hint">
+    ☐ hover 卡片内任意位置 → 选中并只显示外层 <code>&lt;closed-card&gt;</code> host 的覆盖框<br>
+    ☐ ⌘C → prompt 描述 host（tag closed-card），不出现影子树内部元素<br>
+    ☐ 控制台不应出现任何访问 closed root 的报错
+  </p>
+
+  <h2>6. 主树基线（回归对照）</h2>
+  <div class="demo">
+    <div style="display:flex;gap:12px;align-items:center">
+      <button id="plain-btn" style="padding:8px 16px">普通按钮</button>
+      <button disabled style="padding:8px 16px">主树禁用按钮</button>
+      <span>纯文本段落</span>
+    </div>
+  </div>
+  <p class="hint">
+    ☐ 三个元素的选择行为与改动前一致：disabled 按钮仍可选、span 可选、按钮可点选
+  </p>
+</div>
+
+<script>
+  class OpenCard extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      const root = this.attachShadow({ mode: "open" });
+      root.innerHTML = `
+        <style>
+          .card { border: 1px solid #d6d3d1; border-radius: 6px; padding: 14px; font-size: 13px; }
+          .card__title { font-weight: 600; margin-bottom: 8px; display: block; }
+          .card__row { display: flex; gap: 10px; align-items: center; }
+          .card__btn { padding: 6px 14px; cursor: pointer; }
+          .card__text { color: #57534e; }
+        </style>
+        <div class="card">
+          <span class="card__title">${this.getAttribute("card-title") || "open card"}</span>
+          <div class="card__row">
+            <button class="card__btn" type="button">确认</button>
+            <span class="card__text">只读说明文字</span>
+          </div>
+        </div>`;
+    }
+  }
+
+  class InnerBadge extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      this.attachShadow({ mode: "open" }).innerHTML = `
+        <style>.badge { background: #1c1917; color: #fff; border-radius: 999px; padding: 3px 10px; font-size: 11px; }</style>
+        <span class="badge">inner badge</span>`;
+    }
+  }
+
+  class OuterPanel extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      const root = this.attachShadow({ mode: "open" });
+      root.innerHTML = `
+        <style>
+          .panel { border: 1px dashed #a8a29e; border-radius: 6px; padding: 14px; font-size: 13px; }
+          .panel__hint { color: #a8a29e; margin-top: 8px; }
+        </style>
+        <div class="panel">
+          <inner-badge></inner-badge>
+          <inner-badge></inner-badge>
+          <p class="panel__hint">外层影子树面板</p>
+        </div>`;
+    }
+  }
+
+  class ToolBar extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      this.attachShadow({ mode: "open" }).innerHTML = `
+        <style>
+          .bar { display: flex; gap: 10px; }
+          .bar button { padding: 6px 14px; font-size: 13px; }
+        </style>
+        <div class="bar">
+          <button type="button">可用操作</button>
+          <button type="button" disabled>已禁用</button>
+          <button type="button">删除</button>
+        </div>`;
+    }
+  }
+
+  class LoginForm extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      this.attachShadow({ mode: "open" }).innerHTML = `
+        <style>form { display: flex; gap: 10px; } input { padding: 6px 10px; font-size: 13px; }</style>
+        <form onsubmit="return false">
+          <input type="text" placeholder="用户名" aria-label="用户名">
+          <button type="submit">登录</button>
+        </form>`;
+    }
+  }
+
+  class ClosedCard extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      const root = this.attachShadow({ mode: "closed" });
+      const box = document.createElement("div");
+      box.style.cssText = "border:1px solid #d6d3d1;border-radius:6px;padding:14px;font-size:13px;background:#fafaf9";
+      box.textContent = this.getAttribute("card-title") || "closed card";
+      const btn = document.createElement("button");
+      btn.textContent = "隐藏按钮";
+      btn.style.cssText = "margin-left:10px;padding:4px 10px";
+      box.appendChild(btn);
+      root.appendChild(box);
+    }
+  }
+
+  customElements.define("open-card", OpenCard);
+  customElements.define("inner-badge", InnerBadge);
+  customElements.define("outer-panel", OuterPanel);
+  customElements.define("tool-bar", ToolBar);
+  customElements.define("login-form", LoginForm);
+  customElements.define("closed-card", ClosedCard);
+</script>
+</body>
+</html>
