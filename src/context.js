@@ -335,7 +335,14 @@
       dataAttrs, reactProps: frameworkProps, ...reactInfo, ...vueInfo,
     };
     ctx.title = contextTitle(el, ctx);
-    ctx.inside = getSemanticContextStr(el);
+    // The inside: field leads with the shadow host when the element lives in
+    // one, so both the user and the receiving AI know the owning component.
+    // Elements in the main tree (and the host itself) keep the plain output.
+    const host = shadowHostOf(el);
+    const semantic = getSemanticContextStr(el);
+    ctx.inside = host
+      ? [`shadow <${host.tagName.toLowerCase()}>`, semantic].filter(Boolean).join("; ")
+      : semantic;
     ctx.visual = getVisualSummary(el, ctx, classTokens);
     if (shouldIncludeSelector(rawSelector, ctx)) ctx.selector = rawSelector;
     if (shouldIncludeLayout(el)) ctx.layout = getLayoutSummary(el);

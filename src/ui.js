@@ -490,11 +490,18 @@
   function elementLabel(el) {
     const role = explicitOrImplicitRole(el);
     const label = accessibleLabel(el);
-    if (role && label) return `${role} "${label}"`;
-    if (label) return `${el.tagName.toLowerCase()} "${label}"`;
-    if (el.id) return `#${el.id}`;
-    if (el.classList.length) return `.${el.classList[0]}`;
-    return `<${el.tagName.toLowerCase()}>`;
+    let text;
+    if (role && label) text = `${role} "${label}"`;
+    else if (label) text = `${el.tagName.toLowerCase()} "${label}"`;
+    else if (el.id) text = `#${el.id}`;
+    else if (el.classList.length) text = `.${el.classList[0]}`;
+    else text = `<${el.tagName.toLowerCase()}>`;
+    // Shadow-inner selection shows which host component owns the element, so
+    // the box doesn't look like it jumped from the component frame inward.
+    // The host itself (shadowHostOf null) gets no hint.
+    const host = shadowHostOf(el);
+    if (host) text += " " + t("insideShadow").replace("{host}", host.tagName.toLowerCase());
+    return text;
   }
 
   // ── Tags ────────────────────────────────────────────────────
