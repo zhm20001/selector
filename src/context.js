@@ -158,7 +158,7 @@
         if (node.__vueParentComponent) return { version: 3, instance: node.__vueParentComponent };
         if (node.__vue__) return { version: 2, instance: node.__vue__ };
       } catch (_) { return null; }
-      node = node.parentElement;
+      node = climbParent(node);
     }
     return null;
   }

@@ -11,17 +11,24 @@
   //    path back to the host for closed roots — never entered, by scope).
   //    document.elementsFromPoint is boundary-blind and reports only the
   //    host, so descend through open shadow roots the same way.
+  // Each hop peels one shadow boundary; a depth cap guards against
+  // pathological nesting. top.shadowRoot is null for closed roots, which
+  // stops the descent early.
+  const MAX_SHADOW_HOPS = 8;
   function innermostEventTarget(e) {
-    try { const path = e.composedPath && e.composedPath(); if (path && path.length && path[0]) return path[0]; } catch (_) {}
+    try {
+      const path = e.composedPath && e.composedPath();
+      const first = path && path[0];
+      if (first && first.nodeType === 1) return first;
+    } catch (_) {}
     return e.target;
   }
   function elementStackFromPoint(e) {
     if (!document.elementsFromPoint || e.clientX == null || e.clientY == null) return [];
     let stack = document.elementsFromPoint(e.clientX, e.clientY);
-    // Each hop peels one shadow boundary: the topmost element is the host of
-    // an open root; re-hit-test inside that root to reach the real element.
-    // top.shadowRoot is null for closed roots, which stops the descent.
-    for (let hop = 0; hop < 8; hop++) {
+    // Each hop: the topmost element is the host of an open root; re-hit-test
+    // inside that root to reach the real element.
+    for (let hop = 0; hop < MAX_SHADOW_HOPS; hop++) {
       const top = stack[0];
       const root = top && top.nodeType === 1 && top.shadowRoot;
       if (!root || typeof root.elementsFromPoint !== "function") break;
@@ -60,7 +67,7 @@
     if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return null;
     const stack = elementStackFromPoint(e);
     const real = innermostEventTarget(e);
-    for (const el of (stack.length ? stack : [real])) {
+    for (const el of (stack.length ? stack : [])) {
       const nested = resolveNestedTarget(root, el);
       if (nested) return nested;
     }
@@ -216,6 +223,8 @@
   }
 
   // ── Navigation ──────────────────────────────────────────────
+  // Arrow-key navigation deliberately still walks the light-DOM chain only;
+  // crossing shadow boundaries here lands with the keyboard/marquee ticket (#3).
   function navigateToParent() {
     if (selectedElements.length!==1) return;
     let p=selectedElements[0].parentElement;
